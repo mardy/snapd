@@ -20,21 +20,84 @@
 package ifacestate
 
 import (
+	"fmt"
 	"regexp"
 
 	"github.com/snapcore/snapd/overlord/hookstate"
+	"github.com/snapcore/snapd/overlord/state"
 )
 
-type prepareHandler struct{}
+type prepareHandler struct {
+	context *hookstate.Context
+}
 
-type connectHandler struct{}
+type connectHandler struct {
+	context *hookstate.Context
+}
 
-func (h *prepareHandler) Before() error {
+func connectTask(context *hookstate.Context) (*state.Task, error) {
+	var id string
+	err := context.Get("connect-task", &id)
+	if err != nil {
+		return nil, err
+	}
+	state := context.State()
+	ts := state.Task(id)
+	if ts == nil {
+		return nil, fmt.Errorf("Failed to find connect-task")
+	}
+	return ts, nil
+}
+
+func copyAttributesFromConnectTask(context *hookstate.Context) (err error) {
+	var ts *state.Task
+	if ts, err = connectTask(context); err != nil {
+		return err
+	}
+
+	var attrs map[string]interface{}
+	err = ts.Get("attributes", &attrs)
+	if err == state.ErrNoState {
+		return nil
+	}
+
+	if err == nil {
+		context.Set("attributes", attrs)
+	}
+
+	return err
+}
+
+func copyAttributesToConnectTask(context *hookstate.Context) error {
+	var attrs map[string]interface{}
+	err := context.Get("attributes", &attrs)
+	if err == state.ErrNoState {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	var ts *state.Task
+	if ts, err = connectTask(context); err != nil {
+		return err
+	}
+
+	ts.Set("attributes", attrs)
 	return nil
 }
 
+func (h *prepareHandler) Before() error {
+	h.context.Lock()
+	defer h.context.Unlock()
+	return copyAttributesFromConnectTask(h.context)
+}
+
 func (h *prepareHandler) Done() error {
-	return nil
+	h.context.Lock()
+	defer h.context.Unlock()
+	return copyAttributesToConnectTask(h.context)
 }
 
 func (h *prepareHandler) Error(err error) error {
@@ -42,7 +105,9 @@ func (h *prepareHandler) Error(err error) error {
 }
 
 func (h *connectHandler) Before() error {
-	return nil
+	h.context.Lock()
+	defer h.context.Unlock()
+	return copyAttributesFromConnectTask(h.context)
 }
 
 func (h *connectHandler) Done() error {
@@ -56,11 +121,11 @@ func (h *connectHandler) Error(err error) error {
 // setupHooks sets hooks of InterfaceManager up
 func setupHooks(hookMgr *hookstate.HookManager) {
 	prepareGenerator := func(context *hookstate.Context) hookstate.Handler {
-		return &prepareHandler{}
+		return &prepareHandler{context: context}
 	}
 
 	connectGenerator := func(context *hookstate.Context) hookstate.Handler {
-		return &connectHandler{}
+		return &connectHandler{context: context}
 	}
 
 	hookMgr.Register(regexp.MustCompile("^prepare-plug-[-a-z0-9]+$"), prepareGenerator)

@@ -136,6 +136,11 @@ func (s *interfaceManagerSuite) TestSmoke(c *C) {
 }
 
 func (s *interfaceManagerSuite) TestConnectTask(c *C) {
+	s.mockIface(c, &ifacetest.TestInterface{InterfaceName: "test"})
+	s.mockSnap(c, consumerYaml)
+	s.mockSnap(c, producerYaml)
+	_ = s.manager(c)
+
 	s.state.Lock()
 	defer s.state.Unlock()
 
@@ -169,6 +174,12 @@ func (s *interfaceManagerSuite) TestConnectTask(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(slot.Snap, Equals, "producer")
 	c.Assert(slot.Name, Equals, "slot")
+	// verify initial attributes are present in connect task
+	var attrs map[string]map[string]interface{}
+	err = task.Get("attributes", &attrs)
+	c.Assert(err, IsNil)
+	c.Assert(attrs["consumer"]["attr1"], Equals, "value1")
+	c.Assert(attrs["producer"]["attr2"], Equals, "value2")
 	i++
 	task = ts.Tasks()[i]
 	c.Check(task.Kind(), Equals, "run-hook")
@@ -705,6 +716,7 @@ version: 1
 plugs:
  plug:
   interface: test
+  attr1: value1
  otherplug:
   interface: test2
 `
@@ -715,6 +727,7 @@ version: 1
 slots:
  slot:
   interface: test
+  attr2: value2
 `
 
 // The setup-profiles task will not auto-connect an plug that was previously
