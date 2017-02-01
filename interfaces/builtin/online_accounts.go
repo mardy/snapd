@@ -20,8 +20,6 @@
 package builtin
 
 import (
-	"bytes"
-
 	"github.com/snapcore/snapd/interfaces"
 )
 
@@ -96,7 +94,7 @@ func (iface *OnlineAccountsInterface) PermanentPlugSnippet(plug *interfaces.Plug
 	case interfaces.SecurityDBus, interfaces.SecurityAppArmor, interfaces.SecuritySecComp, interfaces.SecurityUDev, interfaces.SecurityMount:
 		return nil, nil
 	default:
-		return nil, interfaces.ErrUnknownSecurity
+		return nil, nil
 	}
 }
 
@@ -111,8 +109,12 @@ func (iface *OnlineAccountsInterface) ConnectedPlugSnippet(plug *interfaces.Plug
 	case interfaces.SecurityUDev, interfaces.SecurityMount:
 		return nil, nil
 	default:
-		return nil, interfaces.ErrUnknownSecurity
+		return nil, nil
 	}
+}
+
+func (iface *OnlineAccountsInterface) ConnectedSlotSnippet(plug *interfaces.Plug, slot *interfaces.Slot, securitySystem interfaces.SecuritySystem) ([]byte, error) {
+	return nil, nil
 }
 
 func (iface *OnlineAccountsInterface) PermanentSlotSnippet(slot *interfaces.Slot, securitySystem interfaces.SecuritySystem) ([]byte, error) {
@@ -126,7 +128,7 @@ func (iface *OnlineAccountsInterface) PermanentSlotSnippet(slot *interfaces.Slot
 	case interfaces.SecurityUDev, interfaces.SecurityMount:
 		return nil, nil
 	default:
-		return nil, interfaces.ErrUnknownSecurity
+		return nil, nil
 	}
 }
 
@@ -138,6 +140,6 @@ func (iface *OnlineAccountsInterface) SanitizeSlot(slot *interfaces.Slot) error 
 	return nil
 }
 
-func (iface *OnlineAccountsInterface) AutoConnect() bool {
+func (iface *OnlineAccountsInterface) AutoConnect(plug *interfaces.Plug, slot *interfaces.Slot) bool {
 	return true
 }
