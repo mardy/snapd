@@ -141,5 +141,5 @@ func (iface *OnlineAccountsInterface) SanitizeSlot(slot *interfaces.Slot) error 
 }
 
 func (iface *OnlineAccountsInterface) AutoConnect(plug *interfaces.Plug, slot *interfaces.Slot) bool {
-	return true
+	return false // FIXME tmp to test interface hooks
 }
