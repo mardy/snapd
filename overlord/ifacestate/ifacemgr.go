@@ -30,6 +30,7 @@ import (
 	"github.com/snapcore/snapd/overlord/hookstate"
 	"github.com/snapcore/snapd/overlord/snapstate"
 	"github.com/snapcore/snapd/overlord/state"
+	"github.com/snapcore/snapd/snap"
 )
 
 // InterfaceManager is responsible for the maintenance of interfaces in
@@ -43,7 +44,7 @@ type InterfaceManager struct {
 
 // Manager returns a new InterfaceManager.
 // Extra interfaces can be provided for testing.
-func Manager(s *state.State, hookManager *hookstate.HookManager, extra []interfaces.Interface) (*InterfaceManager, error) {
+func Manager(s *state.State, hookManager *hookstate.HookManager, extraInterfaces []interfaces.Interface, extraBackends []interfaces.SecurityBackend) (*InterfaceManager, error) {
 	// NOTE: hookManager is nil only when testing.
 	if hookManager != nil {
 		setupHooks(hookManager)
@@ -55,7 +56,7 @@ func Manager(s *state.State, hookManager *hookstate.HookManager, extra []interfa
 		runner: runner,
 		repo:   interfaces.NewRepository(),
 	}
-	if err := m.initialize(extra); err != nil {
+	if err := m.initialize(extraInterfaces, extraBackends); err != nil {
 		return nil, err
 	}
 
@@ -76,52 +77,40 @@ func Manager(s *state.State, hookManager *hookstate.HookManager, extra []interfa
 	return m, nil
 }
 
-func initialConnectAttributes(s *state.State, plugSnap string, plugName string, slotSnap string, slotName string) (map[string]interface{}, error) {
-	// Set initial interface attributes for the plug- and slot- snaps in connect task.
+func setInitialConnectAttributes(ts *state.Task, plugSnap string, plugName string, slotSnap string, slotName string) error {
+	// Set initial interface attributes for the plug and slot snaps in connect task.
 	var snapst snapstate.SnapState
 	var err error
 
-	if err = snapstate.Get(s, plugSnap, &snapst); err != nil {
-		return nil, err
+	st := ts.State()
+	if err = snapstate.Get(st, plugSnap, &snapst); err != nil {
+		return err
 	}
-
 	snapInfo, err := snapst.CurrentInfo()
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	attrs := make(map[string]interface{})
-
-	plugSnapAttrs := make(map[string]interface{})
 	if plug, ok := snapInfo.Plugs[plugName]; ok {
-		for k, v := range plug.Attrs {
-			plugSnapAttrs[k] = v
-		}
+		ts.Set("plug-attrs", plug.Attrs)
 	} else {
-		return nil, fmt.Errorf("Snap %q has no plug named %q", plugSnap, plugName)
+		return fmt.Errorf("snap %q has no plug named %q", plugSnap, plugName)
 	}
 
-	if err = snapstate.Get(s, slotSnap, &snapst); err != nil {
-		return nil, err
+	if err = snapstate.Get(st, slotSnap, &snapst); err != nil {
+		return err
 	}
 	snapInfo, err = snapst.CurrentInfo()
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	slotSnapAttrs := make(map[string]interface{})
+	snap.AddImplicitSlots(snapInfo)
 	if slot, ok := snapInfo.Slots[slotName]; ok {
-		for k, v := range slot.Attrs {
-			slotSnapAttrs[k] = v
-		}
+		ts.Set("slot-attrs", slot.Attrs)
 	} else {
-		return nil, fmt.Errorf("Snap %q has no slot named %q", slotSnap, slotName)
+		return fmt.Errorf("snap %q has no slot named %q", slotSnap, slotName)
 	}
 
-	attrs[plugSnap] = plugSnapAttrs
-	attrs[slotSnap] = slotSnapAttrs
-
-	return attrs, err
+	return nil
 }
 
 // Connect returns a set of tasks for connecting an interface.
@@ -152,7 +141,9 @@ func Connect(st *state.State, plugSnap, plugName, slotSnap, slotName string) (*s
 	summary := fmt.Sprintf(i18n.G("Connect %s:%s to %s:%s"),
 		plugSnap, plugName, slotSnap, slotName)
 	connectInterface := st.NewTask("connect", summary)
-	initialContext := map[string]interface{}{"connect-task": connectInterface.ID()}
+
+	initialContext := make(map[string]interface{})
+	initialContext["attrs-task"] = connectInterface.ID()
 
 	plugHookSetup := &hookstate.HookSetup{
 		Snap:     plugSnap,
@@ -161,8 +152,6 @@ func Connect(st *state.State, plugSnap, plugName, slotSnap, slotName string) (*s
 	}
 
 	summary = fmt.Sprintf(i18n.G("Run hook %s of snap %q"), plugHookSetup.Hook, plugHookSetup.Snap)
-	initialContext["other-snap"] = slotSnap
-	initialContext["plug-or-slot"] = plugName
 	preparePlugConnection := hookstate.HookTask(st, summary, plugHookSetup, initialContext)
 
 	slotHookSetup := &hookstate.HookSetup{
@@ -172,16 +161,13 @@ func Connect(st *state.State, plugSnap, plugName, slotSnap, slotName string) (*s
 	}
 
 	summary = fmt.Sprintf(i18n.G("Run hook %s of snap %q"), slotHookSetup.Hook, slotHookSetup.Snap)
-	initialContext["other-snap"] = plugSnap
-	initialContext["plug-or-slot"] = slotName
 	prepareSlotConnection := hookstate.HookTask(st, summary, slotHookSetup, initialContext)
 	prepareSlotConnection.WaitFor(preparePlugConnection)
 
 	connectInterface.Set("slot", interfaces.SlotRef{Snap: slotSnap, Name: slotName})
 	connectInterface.Set("plug", interfaces.PlugRef{Snap: plugSnap, Name: plugName})
-	attrs, _ := initialConnectAttributes(st, plugSnap, plugName, slotSnap, slotName)
-	if attrs != nil {
-		connectInterface.Set("attributes", attrs)
+	if err := setInitialConnectAttributes(connectInterface, plugSnap, plugName, slotSnap, slotName); err != nil {
+		return nil, err
 	}
 	connectInterface.WaitFor(prepareSlotConnection)
 
@@ -192,8 +178,6 @@ func Connect(st *state.State, plugSnap, plugName, slotSnap, slotName string) (*s
 	}
 
 	summary = fmt.Sprintf(i18n.G("Run hook %s of snap %q"), connectSlotHookSetup.Hook, connectSlotHookSetup.Snap)
-	initialContext["other-snap"] = plugSnap
-	initialContext["plug-or-slot"] = slotName
 	connectSlotConnection := hookstate.HookTask(st, summary, connectSlotHookSetup, initialContext)
 	connectSlotConnection.WaitFor(connectInterface)
 
@@ -204,8 +188,6 @@ func Connect(st *state.State, plugSnap, plugName, slotSnap, slotName string) (*s
 	}
 
 	summary = fmt.Sprintf(i18n.G("Run hook %s of snap %q"), connectPlugHookSetup.Hook, connectPlugHookSetup.Snap)
-	initialContext["other-snap"] = slotSnap
-	initialContext["plug-or-slot"] = plugName
 	connectPlugConnection := hookstate.HookTask(st, summary, connectPlugHookSetup, initialContext)
 	connectPlugConnection.WaitFor(connectSlotConnection)
 
